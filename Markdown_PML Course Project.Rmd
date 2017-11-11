@@ -1,0 +1,150 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Introduction
+This project is the final course project in Coursera's Pratical Machine Learning that is taught by professors from John Hopkins University. The goal of the project is to use data from fitness trackers from six participants to predict different fashions of a weightlifting move, a unileral dumbbell biceps curl. There were six classes of the exercise: done according to specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+#Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Data
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+#Loading Data
+
+###Set up URL for download
+```{r prepare to download data}
+URLTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+URLTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+###Download datasets
+```{r load data}
+training <- read.csv(url(URLTrain))
+testing <- read.csv(url(URLTest))
+```
+###Load the required packages
+```{r library, results='hide', warning=FALSE, message=FALSE}
+library(caret)
+library(lattice)
+library(AppliedPredictiveModeling)
+library(doParallel)
+library(rpart)
+```
+#Clean Training Data and Reduce Variables
+The first step is to make all of the variables into factors. 
+```{r Set data as factors, results='hide', warning=FALSE, message=FALSE}
+for(i in 1:(ncol(training)-1)){
+  if(class(training[, i]) == 'factor'){    
+    training[, i] <- as.numeric(as.character(training[, i]))    
+  }
+}
+```
+The dataset has 160 variables; however, there many unneeded variables that can be removed.
+
+The first seven columns are identification variables that will be removed.
+```{r remove first seven columns}
+training <- training[,-(1:7)]
+```
+Next I have chosen to remove variables that have with near zero variance. This process - removing near zero variance variables - removes 59 variables from each dataset leaving 94 variables.
+```{r Remove near zero variance variables}
+NZV <- nearZeroVar(training)
+training <- training[ , -NZV]
+```
+Extraneous variables remain in the data, particalurly those with values of NA.Remove the NA variables with a mean greater than 95%.
+```{r remove variables with NA > 0.95}
+AllNA <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[,AllNA == FALSE]
+dim(training)
+```
+This process leaves 53 variables for analysis.
+
+##Create Training and Testing Datasets
+The next step is to create training and testing datasets from the training data for cross validation purposes. I took a 70 percent of the data for model training and the remaining 30 percent to test for accuracy. 
+```{r Create datasets, results='hold'}
+set.seed(12345)
+inTrain <- createDataPartition(training$classe, p=0.7, list = FALSE)
+TrainSet<- training[inTrain, ]
+TestSet <- training[-inTrain, ]
+dim(TrainSet)
+dim(TestSet)
+```
+The training and test datasets have the same number of variables. We are now ready to move to exploratory analysis. 
+
+#Pre-Model Analysis
+Before fitting a model to the data, it is helpful to determine what an expected classification should be. This will help determine how we optimize models. 
+
+```{r histogram, echo=FALSE}
+bookTheme(set = TRUE)
+histogram(x = TrainSet$classe,
+          main = "Histogram of Classe of Exercise in Training Dataset",
+          xlab = "Classe of Exercise",
+          ylab = "Frequency in Training Data")
+```
+
+The histogram above indicates that each classes is within an order of magnitude of each other and demonstrates that the variable we are trying to model - classe of exercise - is relatively balanced in the training dataset. 
+
+#Prediction Model Building
+
+Three methods will by applied to the training data set and the one with the highest accuarcy will be applied to the test dataset for the quiz predictions. The methods utilized will be random forest, decision tree, and generalized boosted models.
+
+## 1. Random Forest
+The first model is a Random Forest. Due the computing requirments, I have used a control function to limit the number of cross-validated folds to two. 
+```{r set-up, message=FALSE, warning=FALSE}
+registerDoParallel()
+##Set up a control function for Random Forest
+controlRF <- trainControl(method="cv", 2, savePredictions = "final")
+##Model the Random Forest algorithm
+modelRF <- train(classe~., data = TrainSet, method ="rf",
+                 trControl=controlRF)
+##Test model against test data
+predict_rf <- predict(modelRF, TestSet)
+##Determine level of accuracy
+confusionMatrix(predict_rf, TestSet$classe)$overall[1]
+```
+The Random Forest model demonstrates an excellent prediciton capability against our test data. 
+
+##Decision Trees
+The second model I tested was a decision tree model.
+```{r DF}
+modelDF <- train(classe~., data = TrainSet, method = "rpart")
+predict_df <- predict(modelDF, TestSet)
+confusionMatrix(predict_df, TestSet$classe)$overall[1]
+```
+The results from the Decision Tree model leaves much to be desired. The model performs relatively poorly compared to the Random Forest model. 
+
+##Generalized Boosted Model
+The third model I tested was a Generalized Boosted Model. I implemented a control to the algorithm to minimize required computing power, limiting cross-validation to 5 folds and 1 repeats.
+```{r GBM, message=FALSE, warning=FALSE}
+controlGBM <- trainControl(method = "cv", number = 5, repeats =1)
+modelGBM <-train(classe~., data = TrainSet, method = "gbm", trControl = controlGBM, verbose = FALSE)
+predict_gbm <- predict(modelGBM, TestSet)
+confusionMatrix(predict_gbm, TestSet$class)$overall[1]
+```
+The Generalized Boosted Model performs well, but is not as strong as the Random Forest model.
+
+Of the three models, the random forest model performed with the highest in-sample accuracy and will be used for the final test predictions. I would expect the out-of-sample error for the Random Forest model to be 1 - 0.9916737, which is 0.83263%. 
+
+#Final Test
+```{r Final Test}
+#Conduct the predictions of the test dataset using the random forest model.
+predict_rf_final <- predict(modelRF, testing)
+predict_rf_final
+#Predictions: BABAAEDBAABCBAEEABBB
+```
+I submitted this result as part of the capstone project. According to the results, the Random Forest model predicted 100% of the answers correct of the final test data.
